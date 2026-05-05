@@ -1,0 +1,20 @@
+  cups-exporter:
+    build:
+      context: /home/cupsadmin/prometheus-agent
+      dockerfile: Dockerfile
+    image: cups-exporter:local
+    container_name: cups-exporter
+    restart: unless-stopped
+    #ports:
+    #  - "9628:9628"
+    environment:
+      - CUPS_SERVER=/var/run/cups/cups.sock
+    volumes:
+      - /var/run/cups/cups.sock:/var/run/cups/cups.sock:ro
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9628/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
