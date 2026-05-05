@@ -8,6 +8,8 @@ Exposes printer status, job queue depth, and scheduler health via a `/metrics` H
 endpoint on port `9628`. Runs as a Docker container alongside your CUPS server using the
 CUPS Unix socket directly, so no network config or credentials needed.
 
+![CUPS Print Server Status](CUPS_Print_Server.png)
+
 ---
 
 ## Metrics
