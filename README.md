@@ -149,11 +149,15 @@ Add this job to your `prometheus.yml` scrape config:
 
 ```yaml
 scrape_configs:
-  - job_name: 'cups'
+  - job_name: 'cups-exporter'
+    scrape_interval: 30s
+    metrics_path: /metrics
     static_configs:
       - targets: ['192.168.70.10:9628']
         labels:
-          instance: 'cups-print'
+          role: 'print-server'
+          use: 'cups'
+          hostname: 'cups-print'
 ```
 
 Replace `192.168.70.10` with the IP of your CUPS host. If Prometheus is on the same
