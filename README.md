@@ -53,14 +53,16 @@ cups-prometheus-exporter/
 ### 1. Clone the repo
 
 ```bash
-git clone https://your-gitea-or-github/cups-prometheus-exporter.git
+git clone https://github.com/variablenix/cups-prometheus-exporter.git
 cd cups-prometheus-exporter
 ```
 
-### 2. Build the image
+### 2. Pull the image from GHCR
+
+The image is published to GitHub Container Registry and is the recommended way to deploy:
 
 ```bash
-docker compose build cups-exporter
+docker pull ghcr.io/variablenix/cups-prometheus-exporter:latest
 ```
 
 ### 3. Start the exporter
@@ -94,12 +96,11 @@ Only the `cups-exporter` service is required. The full `docker-compose.yml` in t
 also includes `node-exporter` and `cadvisor` for host and container metrics — include or
 drop those based on your setup.
 
+The default compose config pulls from GHCR:
+
 ```yaml
 cups-exporter:
-  build:
-    context: .
-    dockerfile: Dockerfile
-  image: cups-exporter:local
+  image: ghcr.io/variablenix/cups-prometheus-exporter:latest
   container_name: cups-exporter
   restart: unless-stopped
   environment:
@@ -118,6 +119,29 @@ cups-exporter:
 > **Note:** `network_mode: host` is required so the container can reach the CUPS socket
 > and expose metrics on the host network. The `ports:` directive has no effect in host
 > network mode and can be omitted — Docker will warn you about this, which is expected.
+
+---
+
+## Building Locally
+
+If you want to build the image yourself instead of pulling from GHCR:
+
+```bash
+docker compose build cups-exporter
+docker compose up -d cups-exporter
+```
+
+When building locally, update the `image:` line in `docker-compose.yml` to use a local
+tag instead of the GHCR reference:
+
+```yaml
+cups-exporter:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: cups-exporter:local
+  ...
+```
 
 ---
 
@@ -140,6 +164,39 @@ CMD ["python3", "/app/cups_exporter.py", "--port", "9628"]
 
 `curl` is included for the Docker healthcheck. `cups-client` provides `lpstat` which
 is how the exporter talks to CUPS.
+
+---
+
+## Publishing to GHCR
+
+The image is published to `ghcr.io/variablenix/cups-prometheus-exporter`. To build and
+push a new version manually:
+
+```bash
+# Authenticate with GHCR using a personal access token
+echo $GITHUB_TOKEN | docker login ghcr.io -u variablenix --password-stdin
+
+# Build and tag
+docker build -t ghcr.io/variablenix/cups-prometheus-exporter:latest .
+
+# Push
+docker push ghcr.io/variablenix/cups-prometheus-exporter:latest
+```
+
+To tag a versioned release alongside `latest`:
+
+```bash
+docker build \
+  -t ghcr.io/variablenix/cups-prometheus-exporter:latest \
+  -t ghcr.io/variablenix/cups-prometheus-exporter:1.0.0 \
+  .
+
+docker push ghcr.io/variablenix/cups-prometheus-exporter:latest
+docker push ghcr.io/variablenix/cups-prometheus-exporter:1.0.0
+```
+
+The `GITHUB_TOKEN` needs `write:packages` scope. For CI/CD, a GitHub Actions workflow
+with `packages: write` permission can automate this on push to `main`.
 
 ---
 
@@ -196,9 +253,16 @@ command: ["python3", "/app/cups_exporter.py", "--port", "9999"]
 
 ---
 
-## Rebuilding After Changes
+## Updating
 
-If you edit `cups_exporter.py` or the `Dockerfile`:
+To pull the latest image from GHCR and restart:
+
+```bash
+docker compose pull cups-exporter
+docker compose up -d cups-exporter
+```
+
+If you built locally and edited `cups_exporter.py` or the `Dockerfile`, rebuild instead:
 
 ```bash
 docker rm -f cups-exporter
