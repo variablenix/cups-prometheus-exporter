@@ -1,149 +1,77 @@
 #!/usr/bin/env bash
-# build-and-publish.sh — Build and push cups-prometheus-exporter to GHCR
+# Build and publish the exporter image to GitHub Container Registry.
 #
 # Usage:
-#   bash build-and-publish.sh          # build + push latest
-#   bash build-and-publish.sh 1.0.0    # build + push with version tag
+#   ./build-and-publish.sh          # publish latest
+#   ./build-and-publish.sh 1.0.0    # publish latest and 1.0.0
 #
-# Requirements:
-#   - git, docker
-#   - One of: gh CLI (preferred) or GITHUB_TOKEN env var with write:packages scope
-#     GHCR login is handled automatically by this script
-#
-# Location: cups-prometheus-exporter/build-and-publish.sh
+# Environment overrides:
+#   GHCR_USER=variablenix
+#   GHCR_IMAGE=ghcr.io/variablenix/cups-prometheus-exporter
+#   DOCKER_PLATFORM=linux/amd64,linux/arm64
 
 set -euo pipefail
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Config
-# ─────────────────────────────────────────────────────────────────────────────
-GHCR_USER="variablenix"
-IMAGE="ghcr.io/${GHCR_USER}/cups-prometheus-exporter"
-TAG="latest"
+readonly GHCR_USER="${GHCR_USER:-${GITHUB_ACTOR:-variablenix}}"
+readonly IMAGE="${GHCR_IMAGE:-ghcr.io/${GHCR_USER}/cups-prometheus-exporter}"
+readonly LATEST_TAG="${IMAGE}:latest"
+readonly VERSION_INPUT="${1:-}"
+readonly VERSION="${VERSION_INPUT#v}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Colors
-# ─────────────────────────────────────────────────────────────────────────────
-RESET="\033[0m"
-BOLD="\033[1m"
-GREEN="\033[0;32m"
-YELLOW="\033[0;33m"
-RED="\033[0;31m"
-DIM="\033[2m"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Parse args — optional version tag
-# ─────────────────────────────────────────────────────────────────────────────
-if [[ "${1:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  VERSION="${1}"
-else
-  VERSION=""
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [version]" >&2
+  exit 2
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Header
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}╔══════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}║   cups-prometheus-exporter — Build & Push    ║${RESET}"
-echo -e "${BOLD}╚══════════════════════════════════════════════╝${RESET}"
-echo -e "${DIM}  Image   : ${IMAGE}:${TAG}${RESET}"
-[[ -n "${VERSION}" ]] && echo -e "${DIM}  Version : ${IMAGE}:${VERSION}${RESET}"
-echo ""
+if [[ -n "${VERSION}" && ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  echo "Version must be a semantic version such as 1.0.0 or 1.0.0-rc.1" >&2
+  exit 2
+fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Preflight — verify GHCR auth before doing any work
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  Preflight checks${RESET}"
-
-if command -v gh &>/dev/null; then
-  if ! gh auth status &>/dev/null; then
-    echo -e "  ${RED}✗ gh CLI is not authenticated${RESET}"
-    echo -e "  ${DIM}  Run: gh auth login${RESET}"
-    echo -e "  ${DIM}  Then re-run this script${RESET}"
-    exit 1
-  fi
-elif [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo -e "  ${RED}✗ No GHCR auth available${RESET}"
-  echo -e "  ${DIM}  Install gh CLI and run: gh auth login${RESET}"
-  echo -e "  ${DIM}  Or: export GITHUB_TOKEN=<token with write:packages>${RESET}"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required" >&2
+  exit 1
+fi
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "docker buildx is required" >&2
   exit 1
 fi
 
-echo -e "  ${GREEN}✓${RESET} Auth available"
-echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 1 — Authenticate to GHCR
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  1. Authenticating to GHCR${RESET}"
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-  echo -e "  ${GREEN}✓${RESET} Logged in via GITHUB_TOKEN env"
-elif command -v gh &>/dev/null; then
-  gh auth token | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-  echo -e "  ${GREEN}✓${RESET} Logged in via gh CLI"
-fi
-echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Build Docker image
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  2. Building Docker image${RESET}"
-echo -e "${DIM}  This may take a minute on first build${RESET}"
-echo ""
-
-if [[ -n "${VERSION}" ]]; then
-  docker build \
-    --no-cache \
-    -t "${IMAGE}:${TAG}" \
-    -t "${IMAGE}:${VERSION}" \
-    .
+  printf '%s\n' "${GITHUB_TOKEN}" | docker login ghcr.io --username "${GHCR_USER}" --password-stdin
+elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh auth token | docker login ghcr.io --username "${GHCR_USER}" --password-stdin
 else
-  docker build \
-    --no-cache \
-    -t "${IMAGE}:${TAG}" \
-    .
+  echo "GHCR authentication is required. Set GITHUB_TOKEN or run 'gh auth login'." >&2
+  exit 1
 fi
 
-echo ""
-echo -e "  ${GREEN}✓${RESET} Image built"
-echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Push to GHCR
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  3. Pushing to GHCR${RESET}"
-docker push "${IMAGE}:${TAG}"
-echo -e "  ${GREEN}✓${RESET} Pushed ${IMAGE}:${TAG}"
-
+tags=(--tag "${LATEST_TAG}")
 if [[ -n "${VERSION}" ]]; then
-  docker push "${IMAGE}:${VERSION}"
-  echo -e "  ${GREEN}✓${RESET} Pushed ${IMAGE}:${VERSION}"
+  tags+=(--tag "${IMAGE}:${VERSION}")
 fi
-echo ""
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — Verify image is public
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  4. Verifying package is publicly accessible${RESET}"
-if docker manifest inspect "${IMAGE}:${TAG}" &>/dev/null; then
-  echo -e "  ${GREEN}✓${RESET} Image is publicly accessible"
-else
-  echo -e "  ${YELLOW}⚠${RESET} Image may be private — make it public at:"
-  echo -e "    ${DIM}https://github.com/users/variablenix/packages/container/cups-prometheus-exporter/settings${RESET}"
-  echo -e "    ${DIM}Danger Zone → Change package visibility → Public${RESET}"
+labels=(
+  --label "org.opencontainers.image.source=https://github.com/variablenix/cups-prometheus-exporter"
+  --label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+)
+
+platform_args=()
+if [[ -n "${DOCKER_PLATFORM:-}" ]]; then
+  platform_args+=(--platform "${DOCKER_PLATFORM}")
 fi
-echo ""
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Summary
-# ─────────────────────────────────────────────────────────────────────────────
-echo -e "${BOLD}  Summary${RESET}"
-echo -e "${DIM}  ────────────────────────────────────────────${RESET}"
-echo -e "  ${GREEN}✓${RESET} Image pushed: ${IMAGE}:${TAG}"
-[[ -n "${VERSION}" ]] && echo -e "  ${GREEN}✓${RESET} Image pushed: ${IMAGE}:${VERSION}"
-echo ""
-echo -e "${DIM}  To update the running container on moonlab:${RESET}"
-echo -e "${DIM}    bash deploy.sh cups${RESET}"
-echo ""
+docker buildx build \
+  --pull \
+  "${platform_args[@]}" \
+  "${tags[@]}" \
+  "${labels[@]}" \
+  --provenance=true \
+  --sbom=true \
+  --push \
+  .
+
+echo "Published ${LATEST_TAG}"
+if [[ -n "${VERSION}" ]]; then
+  echo "Published ${IMAGE}:${VERSION}"
+fi

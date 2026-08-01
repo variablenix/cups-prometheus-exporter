@@ -1,0 +1,10 @@
+.git
+.github
+.gitignore
+tests
+__pycache__
+*.py[cod]
+*.md
+*.png
+build-and-publish.sh
+docker-compose.yml
