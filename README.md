@@ -1,16 +1,10 @@
 # cups-prometheus-exporter
 
-A lightweight Prometheus exporter for CUPS print server metrics. Built out of necessity
-when I realized there was no simple way to monitor my homelab print server in Grafana —
-so I wrote one.
-
-Exposes printer status, job queue depth, and scheduler health via a `/metrics` HTTP
-endpoint on port `9628`. Runs as a Docker container alongside your CUPS server using the
-CUPS Unix socket directly, so no network config or credentials needed.
+A lightweight Prometheus exporter for CUPS print server metrics. It exposes printer
+status, queue depth, completed-job history, and scheduler health on `/metrics` at port
+`9628`.
 
 ![CUPS Print Server Status](CUPS_Print_Server.png)
-
----
 
 ## Metrics
 
@@ -21,251 +15,120 @@ CUPS Unix socket directly, so no network config or credentials needed.
 | `cups_printer_accepting` | gauge | Printer is accepting jobs (0/1) |
 | `cups_printer_enabled` | gauge | Printer is enabled (0/1) |
 | `cups_jobs_active` | gauge | Active/pending jobs per printer |
-| `cups_jobs_completed` | counter | Completed jobs per printer since CUPS start |
+| `cups_jobs_completed` | gauge | Completed jobs currently retained by CUPS per printer |
 
-All per-printer metrics include a `printer` label with the printer name, e.g.
-`cups_printer_status{printer="Brother-MFC-L3770CDW"}`.
-
----
+All per-printer metrics include a `printer` label. Completed jobs are a gauge because
+CUPS can remove old history when retention limits are reached.
 
 ## Requirements
 
-- Docker + Docker Compose
-- CUPS running on the same host with the Unix socket at `/var/run/cups/cups.sock`
-- Prometheus (to scrape the metrics)
-
----
-
-## Files
-
-```
-cups-prometheus-exporter/
-├── cups_exporter.py       # The exporter itself
-├── Dockerfile             # Builds the container image
-├── docker-compose.yml     # Deploy with Docker Compose
-└── README.md
-```
-
----
+- Docker and Docker Compose
+- CUPS running on the same host with `/var/run/cups/cups.sock`
+- Prometheus configured to scrape the exporter
 
 ## Quickstart
-
-### 1. Clone the repo
 
 ```bash
 git clone https://github.com/variablenix/cups-prometheus-exporter.git
 cd cups-prometheus-exporter
-```
-
-### 2. Pull the image from GHCR
-
-The image is published to GitHub Container Registry and is the recommended way to deploy:
-
-```bash
-docker pull ghcr.io/variablenix/cups-prometheus-exporter:latest
-```
-
-### 3. Start the exporter
-
-```bash
-docker compose up -d cups-exporter
-```
-
-### 4. Verify it's working
-
-```bash
+docker compose up -d
 curl http://localhost:9628/metrics
 ```
 
-You should see Prometheus-formatted output like:
+The default Compose file pulls `ghcr.io/variablenix/cups-prometheus-exporter:latest`,
+mounts the CUPS Unix socket read-only, and publishes the exporter on port `9628`.
+It does not use host networking; the Unix socket mount is sufficient for CUPS access.
 
-```
-# HELP cups_up Whether the CUPS scheduler is running
-# TYPE cups_up gauge
-cups_up 1
-# HELP cups_printer_status Printer state: 0=idle, 1=printing, 2=stopped
-# TYPE cups_printer_status gauge
-cups_printer_status{printer="Brother-MFC-L3770CDW"} 0
-```
-
----
-
-## Docker Compose
-
-Only the `cups-exporter` service is required. The full `docker-compose.yml` in this repo
-also includes `node-exporter` and `cadvisor` for host and container metrics — include or
-drop those based on your setup.
-
-The default compose config pulls from GHCR:
-
-```yaml
-cups-exporter:
-  image: ghcr.io/variablenix/cups-prometheus-exporter:latest
-  container_name: cups-exporter
-  restart: unless-stopped
-  environment:
-    - CUPS_SERVER=/var/run/cups/cups.sock
-  volumes:
-    - /var/run/cups/cups.sock:/var/run/cups/cups.sock:ro
-  network_mode: host
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:9628/metrics"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 10s
-```
-
-> **Note:** `network_mode: host` is required so the container can reach the CUPS socket
-> and expose metrics on the host network. The `ports:` directive has no effect in host
-> network mode and can be omitted — Docker will warn you about this, which is expected.
-
----
-
-## Building Locally
-
-If you want to build the image yourself instead of pulling from GHCR:
+If the host's CUPS socket uses a group ID other than `7`, set it before starting:
 
 ```bash
-docker compose build cups-exporter
-docker compose up -d cups-exporter
+CUPS_SOCKET_GID=1001 docker compose up -d
 ```
 
-When building locally, update the `image:` line in `docker-compose.yml` to use a local
-tag instead of the GHCR reference:
+You can also change the published port or image without editing the Compose file:
 
-```yaml
-cups-exporter:
-  build:
-    context: .
-    dockerfile: Dockerfile
-  image: cups-exporter:local
-  ...
+```bash
+CUPS_EXPORTER_PORT=9962 docker compose up -d
+CUPS_EXPORTER_IMAGE=cups-exporter:local docker compose up -d
 ```
 
----
+The container has separate endpoints for orchestration:
 
-## Dockerfile
+- `/healthz` is a liveness check and returns `200` while the exporter is running.
+- `/readyz` returns `200` only when the CUPS scheduler is reachable.
+- `/metrics` returns Prometheus text exposition data.
 
-```dockerfile
-FROM python:3.12-slim
+## Building locally
 
-RUN apt-get update -qq && \
-    apt-get install -y -qq --no-install-recommends \
-    cups-client \
-    curl && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY cups_exporter.py /app/cups_exporter.py
-
-EXPOSE 9628
-CMD ["python3", "/app/cups_exporter.py", "--port", "9628"]
+```bash
+docker build -t cups-exporter:local .
+CUPS_EXPORTER_IMAGE=cups-exporter:local docker compose up -d
 ```
 
-`curl` is included for the Docker healthcheck. `cups-client` provides `lpstat` which
-is how the exporter talks to CUPS.
-
----
+The image runs as an unprivileged user. On Linux, `CUPS_SOCKET_GID` must match the
+group owning the mounted CUPS socket so the exporter can read it.
 
 ## Publishing to GHCR
 
-The image is published to `ghcr.io/variablenix/cups-prometheus-exporter`. To build and
-push a new version manually:
+The image is published to
+`ghcr.io/variablenix/cups-prometheus-exporter`. The helper uses Docker Buildx and
+publishes build provenance and an SBOM:
 
 ```bash
-# Authenticate with GHCR using a personal access token
-echo $GITHUB_TOKEN | docker login ghcr.io -u variablenix --password-stdin
-
-# Build and tag
-docker build -t ghcr.io/variablenix/cups-prometheus-exporter:latest .
-
-# Push
-docker push ghcr.io/variablenix/cups-prometheus-exporter:latest
+export GITHUB_TOKEN=TOKEN_WITH_WRITE_PACKAGES
+./build-and-publish.sh
+./build-and-publish.sh 1.0.0
 ```
 
-To tag a versioned release alongside `latest`:
+The manual helper accepts either `1.0.0` or `v1.0.0` and publishes the Docker tag as
+`1.0.0`.
 
-```bash
-docker build \
-  -t ghcr.io/variablenix/cups-prometheus-exporter:latest \
-  -t ghcr.io/variablenix/cups-prometheus-exporter:1.0.0 \
-  .
+For a multi-platform image, set `DOCKER_PLATFORM` before running the helper, for
+example `DOCKER_PLATFORM=linux/amd64,linux/arm64`.
 
-docker push ghcr.io/variablenix/cups-prometheus-exporter:latest
-docker push ghcr.io/variablenix/cups-prometheus-exporter:1.0.0
-```
+GitHub Actions publishes automatically after CI passes:
 
-The `GITHUB_TOKEN` needs `write:packages` scope. For CI/CD, a GitHub Actions workflow
-with `packages: write` permission can automate this on push to `main`.
+- pushes to `main` publish `latest` and an immutable `sha-*` tag;
+- tags such as `v1.2.3` publish `1.2.3`, `1.2`, and an immutable `sha-*` tag.
 
----
+The image is pushed; an existing Dockhand stack still needs to pull/redeploy the
+stack to replace its running container. The included Watchtower label intentionally
+keeps Watchtower from performing that update automatically.
 
-## Prometheus Configuration
-
-Add this job to your `prometheus.yml` scrape config:
+## Prometheus configuration
 
 ```yaml
 scrape_configs:
-  - job_name: 'cups-exporter'
+  - job_name: cups-exporter
     scrape_interval: 30s
     metrics_path: /metrics
     static_configs:
-      - targets: ['192.168.70.10:9628']
+      - targets: ["192.168.70.10:9628"]
         labels:
-          role: 'print-server'
-          use: 'cups'
-          hostname: 'cups-print'
+          role: print-server
 ```
 
-Replace `192.168.70.10` with the IP of your CUPS host. If Prometheus is on the same
-machine, use `localhost:9628`.
+Replace the target with the address of the host running the exporter.
 
----
+## Completed job history
 
-## Completed Job History
+CUPS must retain completed jobs for `cups_jobs_completed` to be useful. Add the
+following to `/etc/cups/cupsd.conf` and restart CUPS:
 
-By default CUPS may not keep completed job history. To enable it add this to
-`/etc/cups/cupsd.conf`:
-
-```
+```text
 MaxJobs 500
 PreserveJobHistory Yes
 PreserveJobFiles No
 ```
 
-Then restart CUPS:
+## Development and CI
+
+The GitHub Actions workflow checks Python syntax and tests, shell-script quality,
+Compose configuration, Dockerfile quality, image buildability, and high/critical
+container vulnerabilities. Run the local checks with:
 
 ```bash
-sudo systemctl restart cups
-```
-
-Without this, `cups_jobs_completed` will always return 0.
-
----
-
-## Changing the Port
-
-Default port is `9628`. Override in `docker-compose.yml` if needed:
-
-```yaml
-command: ["python3", "/app/cups_exporter.py", "--port", "9999"]
-```
-
----
-
-## Updating
-
-To pull the latest image from GHCR and restart:
-
-```bash
-docker compose pull cups-exporter
-docker compose up -d cups-exporter
-```
-
-If you built locally and edited `cups_exporter.py` or the `Dockerfile`, rebuild instead:
-
-```bash
-docker rm -f cups-exporter
-docker compose build cups-exporter
-docker compose up -d cups-exporter
+python3 -m unittest discover -s tests -v
+shellcheck build-and-publish.sh
+docker compose config
 ```
