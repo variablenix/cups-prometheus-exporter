@@ -3,6 +3,10 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Keep Debian packages current so the image receives security updates; Trivy
+# scans the resulting image in CI. Hadolint's exact-version rule is therefore
+# intentionally suppressed for this install step.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends cups-client curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -13,11 +17,13 @@ RUN apt-get update \
 WORKDIR /app
 COPY --chown=exporter:exporter cups_exporter.py /app/cups_exporter.py
 
+# Keep the named user so Docker preserves its supplementary lp socket group.
+# hadolint ignore=DL3066
 USER exporter
 EXPOSE 9628
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9628/healthz', timeout=3)"
+    CMD ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9628/healthz', timeout=3)"]
 
 ENTRYPOINT ["python3", "/app/cups_exporter.py"]
 CMD ["--port", "9628"]
