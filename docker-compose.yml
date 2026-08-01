@@ -1,6 +1,7 @@
 services:
   cups-exporter:
     image: ${CUPS_EXPORTER_IMAGE:-ghcr.io/variablenix/cups-prometheus-exporter:latest}
+    pull_policy: always
     container_name: cups-exporter
     restart: unless-stopped
     labels:
