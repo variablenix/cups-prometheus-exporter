@@ -64,7 +64,7 @@ jobs:
           provenance: false
 
       - name: Scan image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cups-exporter:ci
           format: table
