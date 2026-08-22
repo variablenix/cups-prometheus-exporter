@@ -10,6 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends cups-client curl \
     && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --upgrade \
+        'msgpack>=1.2.1' 'setuptools>=78.1.1' \
     && groupadd --system --gid 65532 exporter \
     && (getent group 7 >/dev/null || groupadd --system --gid 7 cups-socket) \
     && useradd --system --uid 65532 --gid exporter --groups 7 --no-create-home --shell /usr/sbin/nologin exporter
