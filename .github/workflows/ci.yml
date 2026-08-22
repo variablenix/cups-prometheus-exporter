@@ -63,6 +63,20 @@ jobs:
           tags: cups-exporter:ci
           provenance: false
 
+      - name: Verify Python package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint python3 cups-exporter:ci -c '
+          import importlib.metadata as metadata
+
+          requirements = {"msgpack": "1.2.1", "setuptools": "78.1.1"}
+          for package, minimum in requirements.items():
+              installed = tuple(int(part) for part in metadata.version(package).split(".")[:3])
+              minimum_version = tuple(int(part) for part in minimum.split(".")[:3])
+              assert installed >= minimum_version, (package, installed, minimum_version)
+          '
+
       - name: Scan image for vulnerabilities
         # v0.36.0; pin the immutable release commit.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25

@@ -1,0 +1,5 @@
+# The python:3.14-slim-bookworm base image publishes an OCI SBOM containing
+# superseded records for these packages. The final image installs msgpack
+# 1.2.1 and setuptools 84.0.0; CI verifies those active versions directly.
+GHSA-6v7p-g79w-8964
+CVE-2025-47273
