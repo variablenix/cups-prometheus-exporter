@@ -44,7 +44,7 @@ jobs:
         run: shellcheck build-and-publish.sh
 
       - name: Check Dockerfile
-        uses: hadolint/hadolint-action@v3.3.0
+        uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: Dockerfile
 
@@ -62,6 +62,20 @@ jobs:
           push: false
           tags: cups-exporter:ci
           provenance: false
+
+      - name: Verify Python package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint python3 cups-exporter:ci -c '
+          import importlib.metadata as metadata
+
+          requirements = {"msgpack": "1.2.1", "setuptools": "78.1.1"}
+          for package, minimum in requirements.items():
+              installed = tuple(int(part) for part in metadata.version(package).split(".")[:3])
+              minimum_version = tuple(int(part) for part in minimum.split(".")[:3])
+              assert installed >= minimum_version, (package, installed, minimum_version)
+          '
 
       - name: Scan image for vulnerabilities
         # v0.36.0; pin the immutable release commit.
