@@ -15,7 +15,7 @@ services:
     volumes:
       - /var/run/cups/cups.sock:/var/run/cups/cups.sock:ro
     ports:
-      - "${CUPS_EXPORTER_PORT:-9628}:9628"
+      - "${CUPS_EXPORTER_BIND_ADDRESS:-0.0.0.0}:${CUPS_EXPORTER_PORT:-9628}:9628"
     read_only: true
     tmpfs:
       - /tmp:mode=1777

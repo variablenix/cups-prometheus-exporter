@@ -1,4 +1,4 @@
-FROM python:3.14-slim-bookworm
+FROM python:3.14.9-slim-trixie@sha256:b347e2dcbc7f0b6f9fb7182e9da6a187fb10ae715e0692518c1aed0eec94a700
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -6,12 +6,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Keep Debian packages current so the image receives security updates; Trivy
 # scans the resulting image in CI. Hadolint's exact-version rule is therefore
 # intentionally suppressed for this install step.
-# hadolint ignore=DL3008
+# The runtime uses only the standard library; pip-only workarounds would add
+# unnecessary packages. Refresh existing OS packages as well as cups-client.
+# hadolint ignore=DL3005,DL3008
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends cups-client curl \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends cups-client ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --no-cache-dir --upgrade \
-        'msgpack>=1.2.1' 'setuptools>=78.1.1' \
+    && python -m pip uninstall --yes pip \
+    && python -c 'import ensurepip, shutil; shutil.rmtree(ensurepip.__path__[0])' \
     && groupadd --system --gid 65532 exporter \
     && (getent group 7 >/dev/null || groupadd --system --gid 7 cups-socket) \
     && useradd --system --uid 65532 --gid exporter --groups 7 --no-create-home --shell /usr/sbin/nologin exporter

@@ -12,6 +12,8 @@ on:
       - main
       - dev
   workflow_dispatch:
+  schedule:
+    - cron: '23 6 * * 1'
 
 permissions:
   contents: read
@@ -60,22 +62,17 @@ jobs:
           context: .
           load: true
           push: false
+          pull: true
+          no-cache: true
           tags: cups-exporter:ci
           provenance: false
 
-      - name: Verify Python package versions
+      - name: Verify runtime and certificate security policy
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint python3 cups-exporter:ci -c '
-          import importlib.metadata as metadata
-
-          requirements = {"msgpack": "1.2.1", "setuptools": "78.1.1"}
-          for package, minimum in requirements.items():
-              installed = tuple(int(part) for part in metadata.version(package).split(".")[:3])
-              minimum_version = tuple(int(part) for part in minimum.split(".")[:3])
-              assert installed >= minimum_version, (package, installed, minimum_version)
-          '
+          docker run --rm -i --read-only --network none --entrypoint python3 \
+            cups-exporter:ci - < scripts/check_image_security.py
 
       - name: Scan image for vulnerabilities
         # v0.36.0; pin the immutable release commit.
@@ -118,8 +115,10 @@ jobs:
     name: Publish image
     needs: verify
     if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      (github.ref == 'refs/heads/main' &&
+       (github.event_name == 'push' || github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch')) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -152,15 +151,46 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build and push image
+      - name: Build a candidate image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           pull: true
-          tags: ${{ steps.meta.outputs.tags }}
+          no-cache: true
+          tags: ghcr.io/${{ github.repository }}:candidate-${{ github.sha }}-${{ github.run_id }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+
+      - name: Verify the candidate runtime and certificate policy
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm -i --read-only --network none --entrypoint python3 \
+            "${IMAGE}@${DIGEST}" - < scripts/check_image_security.py
+
+      - name: Scan the exact candidate before promoting release tags
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Promote the verified digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r image_tag; do
+            if [[ -n "$image_tag" ]]; then
+              docker buildx imagetools create --tag "$image_tag" "${IMAGE}@${DIGEST}"
+            fi
+          done <<< "$IMAGE_TAGS"

@@ -52,6 +52,17 @@ CUPS_EXPORTER_PORT=9962 docker compose up -d
 CUPS_EXPORTER_IMAGE=cups-exporter:local docker compose up -d
 ```
 
+Metrics have no authentication. Keep this port on a trusted monitoring network;
+do not publish it through an Internet-facing proxy. To restrict the published
+interface, set `CUPS_EXPORTER_BIND_ADDRESS` to the host's monitoring address (or
+`127.0.0.1` when Prometheus runs locally). The HTTP listener limits concurrent
+requests to eight, times out idle sockets after five seconds, and closes each
+connection after its response.
+
+The read-only socket mount protects the filesystem entry; it does not make the
+CUPS protocol read-only. The unprivileged exporter only invokes status commands,
+and CUPS must continue to restrict administrative operations to authorized users.
+
 The container has separate endpoints for orchestration:
 
 - `/healthz` is a liveness check and returns `200` while the exporter is running.
@@ -91,6 +102,12 @@ GitHub Actions publishes automatically after CI passes:
 - pushes to `main` publish `latest` and an immutable `sha-*` tag;
 - tags such as `v1.2.3` publish `1.2.3`, `1.2`, and an immutable `sha-*` tag.
 
+Weekly scheduled builds and manual workflow runs on `main` also refresh OS
+packages. Before release tags are promoted, CI checks the exact candidate digest
+for certificate policy compliance and fixable high/critical vulnerabilities.
+Unfixed vendor findings still require review; a passing scan is not proof that an
+image has no possible vulnerabilities. Dependabot tracks Python base-image updates.
+
 The image is pushed; an existing Dockhand stack still needs to pull/redeploy the
 stack to replace its running container. The included Watchtower label intentionally
 keeps Watchtower from performing that update automatically.
@@ -125,7 +142,11 @@ PreserveJobFiles No
 
 The GitHub Actions workflow checks Python syntax and tests, shell-script quality,
 Compose configuration, Dockerfile quality, image buildability, and high/critical
-container vulnerabilities. Run the local checks with:
+container vulnerabilities. It also checks system trust for the exact revoked
+incident anchors, requires Python 3.14.9 or newer, and verifies that pip and its
+bundled installer wheels are absent. The runtime needs only the standard library
+and CUPS client, so unused package installers and their vendored dependencies are
+removed. No vulnerability advisory IDs are globally ignored. Run local checks with:
 
 ```bash
 python3 -m unittest discover -s tests -v

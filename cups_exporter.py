@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urlsplit
@@ -153,21 +154,55 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def __init__(self, *args, max_workers=8, request_timeout=5, **kwargs):
+        self._worker_slots = threading.BoundedSemaphore(max_workers)
+        self.request_timeout = request_timeout
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(self.request_timeout)
+        return connection, address
+
+    def process_request(self, request, client_address):
+        # Close excess connections instead of spawning unbounded threads and
+        # lpstat subprocesses. Existing requests retain their command timeout.
+        if not self._worker_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
 
 class MetricsHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def _send_text(self, body, status=200, content_type="text/plain; charset=utf-8"):
         encoded = body.encode("utf-8")
+        self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(encoded)
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        try:
+            path = urlsplit(self.path).path
+        except ValueError:
+            self._send_text("bad request\n", status=400)
+            return
         if path == "/metrics":
             self._send_text(generate_metrics(), content_type="text/plain; version=0.0.4; charset=utf-8")
         elif path == "/healthz":
